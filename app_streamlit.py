@@ -17,9 +17,19 @@ import random
 import tempfile
 import zipfile
 
+from PIL import Image
 import streamlit as st
 
 from pipeline_core import PipelineConfig, ChequeOCRPipeline, write_outputs
+
+def load_pil_image(path) -> Image.Image | None:
+    try:
+        p = Path(path)
+        if p.exists():
+            return Image.open(p)
+    except Exception:
+        pass
+    return None
 
 st.set_page_config(page_title="Cheque OCR Pipeline", layout="wide")
 st.title("Cheque OCR Pipeline (Detection + OCR)")
@@ -103,7 +113,9 @@ if input_mode == "Select a Sample Cheque (Instant Demo)":
             st.button("🎲 Pick Another Random Cheque", on_click=select_random_sample)
         
         if st.session_state.selected_sample:
-            st.image(str(st.session_state.selected_sample), caption="Sample Cheque Preview", width=500)
+            img = load_pil_image(st.session_state.selected_sample)
+            if img:
+                st.image(img, caption="Sample Cheque Preview", width=500)
             input_files_to_process = [st.session_state.selected_sample]
 else:
     uploads = st.file_uploader(
@@ -174,11 +186,16 @@ if run:
                 colA, colB = st.columns([1.2, 1.0])
 
                 with colA:
-                    st.image(r["image_path"], caption="Original cheque", use_column_width=True)
+                    img_orig = load_pil_image(r["image_path"])
+                    if img_orig:
+                        st.image(img_orig, caption="Original cheque", use_column_width=True)
+                    else:
+                        st.warning("Original cheque image not found.")
 
                     overlay = out_dir / "overlays" / f"{stem}.png"
-                    if overlay.exists():
-                        st.image(str(overlay), caption="Full cheque with courtesy and legal boxes", use_column_width=True)
+                    img_overlay = load_pil_image(overlay)
+                    if img_overlay:
+                        st.image(img_overlay, caption="Full cheque with courtesy and legal boxes", use_column_width=True)
                     else:
                         st.warning("Overlay not found.")
 
@@ -201,17 +218,41 @@ if run:
                         st.caption(f"Line cleanup applied: {dbg.get('line_cleanup_applied')} | Ink keep ratio: {dbg.get('ink_keep_ratio')}")
 
                 with colB:
-                    st.subheader("Crops")
+                    st.subheader("Crops & Processing Breakdown")
                     
                     crop = Path(r.get("crop_path") or "")
-                    if crop.exists():
-                        st.image(str(crop), caption="Courtesy crop (raw)", use_column_width=True)
+                    img_crop = load_pil_image(crop)
+                    if img_crop:
+                        st.image(img_crop, caption="Courtesy crop (raw)", use_column_width=True)
                     else:
                         st.warning("Courtesy crop missing.")
 
+                    # Preprocessing Progression
+                    stages_dict = r.get("stage_paths") or {}
+                    if stages_dict:
+                        st.markdown("**Courtesy Extraction Progression (Processing Stages):**")
+                        # The stages are: 'raw', 'border', 'lines_removed', 'enhanced', 'enhanced_resized'
+                        stage_labels = {
+                            "raw": "1. Raw Crop",
+                            "border": "2. Border Removed",
+                            "lines_removed": "3. Lines Removed",
+                            "enhanced": "4. Enhanced Bin",
+                            "enhanced_resized": "5. CRNN Input"
+                        }
+                        # Display in a sub-grid of columns
+                        sub_cols = st.columns(len(stages_dict))
+                        for col, (k, path) in zip(sub_cols, stages_dict.items()):
+                            with col:
+                                img_stage = load_pil_image(path)
+                                if img_stage:
+                                    st.image(img_stage, caption=stage_labels.get(k, k), use_column_width=True)
+
+                    st.markdown("---")
+                    
                     legal_crop = Path(r.get("legal_crop_path") or "")
-                    if legal_crop.exists():
-                        st.image(str(legal_crop), caption="Legal crop (raw)", use_column_width=True)
+                    img_legal = load_pil_image(legal_crop)
+                    if img_legal:
+                        st.image(img_legal, caption="Legal crop (raw)", use_column_width=True)
                     else:
                         st.warning("Legal crop missing.")
 
