@@ -88,18 +88,13 @@ Fine-tuned **Qwen3.5-0.8B** with LoRA adapter. Features:
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/app_ui.png" alt="App Interface" width="800"/>
-  <br/><em>Streamlit interface — upload or select a sample cheque</em>
+  <img src="docs/screenshots/verified_match.png" alt="Verified Match Result" width="800"/>
+  <br/><em>Verified Case — Bounding boxes, cropped steps, and matching courtesy/legal values</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/pipeline_results.png" alt="Pipeline Results" width="800"/>
-  <br/><em>End-to-end pipeline results — detection overlay, OCR output, verification</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/breakdown.png" alt="Step-by-step Breakdown" width="800"/>
-  <br/><em>Step-by-step image processing breakdown</em>
+  <img src="docs/screenshots/not_verified_mismatch.png" alt="Not Verified Mismatch Result" width="800"/>
+  <br/><em>Not Verified Case — Flagging a discrepancy between OCR digits and parsed legal text</em>
 </p>
 
 ---
