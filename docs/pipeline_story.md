@@ -194,10 +194,17 @@ When a request comes in, Modal spins up a container, attaches an **NVIDIA A10G G
 
 Integrating multiple heterogeneous deep learning systems on high-stakes financial documents presented several distinct challenges:
 
-### 1. Package and Compilation Conflicts in Serverless Environments
-The three models are from different eras and ecosystems. Detectron2 requires older package configurations (specifically `setuptools<70`) and compiles dynamic C++ extensions directly targeting the host GPU's CUDA runtime. Modern vision-language model frameworks (HuggingFace Transformers, PEFT, and Qwen VL) require a cutting-edge Python environment.
-- **The Difficulty**: Putting these packages together led to immediate installer crashes, environment lockups, and compiler errors.
-- **The Solution**: We resolved this by building a customized Modal container image. We explicitly pinned `setuptools<70` prior to running the Detectron2 pip installer, pre-compiled the CUDA wheels, and structured the import scopes so that dynamic CUDA allocations didn't conflict at run-time.
+### 1. Unifying Split Python Environments (Package & Compilation Conflicts)
+Originally, the different modules of the project were isolated in separate, incompatible Python environments:
+- **Part A (Field Detection)** relied on Detectron2, which requires older environment setups (specifically pinning `setuptools<70` to prevent the compiler from crashing on deprecated `distutils` modules).
+- **Part B (Legal OCR)** relied on the latest HuggingFace Transformers, PEFT, and `qwen-vl-utils` packages, which demand a modern Python stack and library ecosystem.
+- **The Difficulty**: Because of these package mismatches, it was initially assumed that the models had to run in separate Python environments, communicating via inter-process pipes or independent microservices, which would cause significant latency and double the GPU memory footprint.
+- **The Solution**: We designed a carefully sequenced build chain that unified all three models into a single, cohesive Python environment. The sequence executes as follows:
+  1. We pin and install `setuptools<70` first.
+  2. We install specific, pre-compiled CUDA-compatible PyTorch binaries (`torch==2.1.2+cu121` and `torchvision==0.16.2+cu121`).
+  3. We compile Detectron2 directly from source inside this context.
+  4. We layer HuggingFace `transformers`, `peft` (for LoRA), and vision utilities on top.
+  By bridging this gap, we enabled the Cascade R-CNN detector, CRNN courtesy reader, and Qwen3.5 legal reader to execute within a **single python process**, eliminating inter-environment overhead and sharing the GPU context seamlessly.
 
 ### 2. The Double Writing System & Translation Gap
 Even if both OCR models read the text perfectly, you are still left with two completely different representations: the courtesy digits (`5150`) and the handwritten literal words (`"خمسة آلاف ومائة وخمسون ريال"`).
