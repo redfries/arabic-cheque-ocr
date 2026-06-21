@@ -190,8 +190,40 @@ When a request comes in, Modal spins up a container, attaches an **NVIDIA A10G G
 
 ---
 
+## Challenges and Technical Difficulties Overcome
+
+Integrating multiple heterogeneous deep learning systems on high-stakes financial documents presented several distinct challenges:
+
+### 1. Package and Compilation Conflicts in Serverless Environments
+The three models are from different eras and ecosystems. Detectron2 requires older package configurations (specifically `setuptools<70`) and compiles dynamic C++ extensions directly targeting the host GPU's CUDA runtime. Modern vision-language model frameworks (HuggingFace Transformers, PEFT, and Qwen VL) require a cutting-edge Python environment.
+- **The Difficulty**: Putting these packages together led to immediate installer crashes, environment lockups, and compiler errors.
+- **The Solution**: We resolved this by building a customized Modal container image. We explicitly pinned `setuptools<70` prior to running the Detectron2 pip installer, pre-compiled the CUDA wheels, and structured the import scopes so that dynamic CUDA allocations didn't conflict at run-time.
+
+### 2. The Double Writing System & Translation Gap
+Even if both OCR models read the text perfectly, you are still left with two completely different representations: the courtesy digits (`5150`) and the handwritten literal words (`"خمسة آلاف ومائة وخمسون ريال"`).
+- **The Difficulty**: There is no off-the-shelf model or library to translate cursive, colloquial Arabic handwriting representation to numeric integers. Small spelling errors in handwriting (e.g. `ثلاثة` transcribed as `ثلاته`) would break standard lookup dictionaries.
+- **The Solution**: We built a custom parser (`parse_legal_amount_v2_fix2`) that applies custom Arabic orthographic normalization. It matches unrecognized tokens against an index of ~60 number words using an **adaptive length-normalized Levenshtein edit distance**. It splits conjoined tokens, ignores filler words like `ريال` or `فقط`, and dynamically parses the remaining numbers to double-check against the courtesy digits.
+
+### 3. Background Guilloche Textures and Guidelines
+Cheque backgrounds are specifically designed to prevent fraud, featuring intricate security pattern lines (guilloche printing), colored backgrounds, and predefined guide lines.
+- **The Difficulty**: OCR models (especially traditional CRNNs trained on text lines) are highly sensitive to these lines. The model frequently misread guidelines as ones (`1`), dashes (`-`), or noise, leading to critical digit insertions/deletions.
+- **The Solution**: We introduced a multi-stage morphological line cleanup pipeline. By applying a binary threshold, running morphological opening with horizontal and vertical rectangular structuring kernels, and masking out long line structures, we stripped away the guidelines while preserving the handwriting strokes. A border-whitening pass was also added to clear out bounding box edges.
+
+### 4. Browser Rendering & TIFF Format Limitations
+The dataset consists of high-resolution `.tif` (TIFF) images. 
+- **The Difficulty**: Standard web browsers and Streamlit image widgets do not natively support TIFF rendering. When selecting a cheque, the UI would render broken images.
+- **The Solution**: We wrote a robust image loader (`read_image_any`) that decodes TIFF files into 8-bit BGR OpenCV arrays, converts them to standard RGB space, compresses them to web-friendly PNG format, and encodes them into inline Base64 data URLs (`data:image/png;base64,...`) for instant rendering in the web interface.
+
+### 5. Serverless Cold Start Latencies
+Deploying a large vision-language model like Qwen3.5-0.8B (which has around 800M parameters) usually introduces high startup latencies if weights are loaded from huggingface at runtime.
+- **The Difficulty**: In a serverless environment like Modal, downloading the 2.2GB model weights every time a container scales from zero would make the web app unusable.
+- **The Solution**: We created a shared persistent network volume (`cheque-ocr-models`) and pre-mounted it to the Modal container at `/root/models`. The container pulls parameters directly from the local mount at boot-time. By utilizing PyTorch `bfloat16` precision on NVIDIA A10G GPUs, the system boots up and performs the entire three-stage pipeline in **under 2.5 seconds** per cheque.
+
+---
+
 ## Conclusion
 
 By wrapping Cascade R-CNN, CRNN+CTC, and Qwen3.5 LoRA into a single script, we turned what could have been a fragmented system into a clean, cohesive pipeline. The custom edit-distance parsing logic bridges the gap between human language and digits, and the verification loop gives the system the ability to double-check its own work.
 
 The final app is live at [redfries--arabic-cheque-ocr-run.modal.run](https://redfries--arabic-cheque-ocr-run.modal.run), serving as a fast, reliable demonstration of modern AI applied to document verification.
+
