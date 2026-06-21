@@ -34,10 +34,11 @@ image = (
         "gcc",
         "g++",
     )
-    # Install PyTorch first (required by Detectron2 build)
+    # Install PyTorch and setuptools<70 first (required by Detectron2 build)
     .pip_install(
         "torch",
         "torchvision",
+        "setuptools<70",
     )
     # Build and install Detectron2 from source
     .run_commands(
