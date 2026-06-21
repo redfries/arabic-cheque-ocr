@@ -57,19 +57,17 @@ image = (
         "qwen-vl-utils",
         "accelerate",
     )
-)
-
-# Define a local mount for the application source files
-# This mounts the current folder into the container during run
-src_mount = modal.Mount.from_local_dir(
-    os.path.dirname(__file__),
-    remote_path="/root/app",
+    # Add local application source code directly into the container image
+    .add_local_dir(
+        os.path.dirname(__file__),
+        remote_path="/root/app",
+        ignore=["models/Qwen3.5_model", "models/detector", ".git", ".conda", "__pycache__"]
+    )
 )
 
 
 @app.function(
     image=image,
-    mounts=[src_mount],
     # Mount the volume containing model weights under /root/models.
     # This aligns with the default paths "models/detector/model_final.pth"
     # and "models/ocr/crnn_ctc_v1/checkpoints/last.pt" when running from /root/app.
