@@ -11,7 +11,9 @@ Per image:
 from __future__ import annotations
 
 from pathlib import Path
+import base64
 import io
+from io import BytesIO
 import os
 import random
 import tempfile
@@ -30,6 +32,21 @@ def load_pil_image(path) -> Image.Image | None:
     except Exception:
         pass
     return None
+
+def render_image(pil_img, caption="", use_container_width=True):
+    if pil_img is None:
+        return
+    try:
+        buffered = BytesIO()
+        pil_img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        width_style = "width: 100%;" if use_container_width else "max-width: 500px;"
+        html = f'<img src="data:image/png;base64,{img_str}" style="{width_style} height: auto; border-radius: 4px; margin-bottom: 5px;" alt="{caption}">'
+        st.markdown(html, unsafe_allow_html=True)
+        if caption:
+            st.caption(caption)
+    except Exception as e:
+        st.error(f"Error rendering image: {e}")
 
 st.set_page_config(page_title="Cheque OCR Pipeline", layout="wide")
 st.title("Cheque OCR Pipeline (Detection + OCR)")
@@ -115,7 +132,7 @@ if input_mode == "Select a Sample Cheque (Instant Demo)":
         if st.session_state.selected_sample:
             img = load_pil_image(st.session_state.selected_sample)
             if img:
-                st.image(img, caption="Sample Cheque Preview", width=500)
+                render_image(img, caption="Sample Cheque Preview", use_container_width=False)
             input_files_to_process = [st.session_state.selected_sample]
 else:
     uploads = st.file_uploader(
@@ -188,14 +205,14 @@ if run:
                 with colA:
                     img_orig = load_pil_image(r["image_path"])
                     if img_orig:
-                        st.image(img_orig, caption="Original cheque", use_column_width=True)
+                        render_image(img_orig, caption="Original cheque", use_container_width=True)
                     else:
                         st.warning("Original cheque image not found.")
 
                     overlay = out_dir / "overlays" / f"{stem}.png"
                     img_overlay = load_pil_image(overlay)
                     if img_overlay:
-                        st.image(img_overlay, caption="Full cheque with courtesy and legal boxes", use_column_width=True)
+                        render_image(img_overlay, caption="Full cheque with courtesy and legal boxes", use_container_width=True)
                     else:
                         st.warning("Overlay not found.")
 
@@ -223,7 +240,7 @@ if run:
                     crop = Path(r.get("crop_path") or "")
                     img_crop = load_pil_image(crop)
                     if img_crop:
-                        st.image(img_crop, caption="Courtesy crop (raw)", use_column_width=True)
+                        render_image(img_crop, caption="Courtesy crop (raw)", use_container_width=True)
                     else:
                         st.warning("Courtesy crop missing.")
 
@@ -245,14 +262,14 @@ if run:
                             with col:
                                 img_stage = load_pil_image(path)
                                 if img_stage:
-                                    st.image(img_stage, caption=stage_labels.get(k, k), use_column_width=True)
+                                    render_image(img_stage, caption=stage_labels.get(k, k), use_container_width=True)
 
                     st.markdown("---")
                     
                     legal_crop = Path(r.get("legal_crop_path") or "")
                     img_legal = load_pil_image(legal_crop)
                     if img_legal:
-                        st.image(img_legal, caption="Legal crop (raw)", use_column_width=True)
+                        render_image(img_legal, caption="Legal crop (raw)", use_container_width=True)
                     else:
                         st.warning("Legal crop missing.")
 
