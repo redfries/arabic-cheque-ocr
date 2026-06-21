@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 import io
 import os
+import random
 import tempfile
 import zipfile
 
@@ -60,15 +61,60 @@ with st.sidebar:
     st.header("Output Settings")
     save_debug = st.checkbox("Save debug artifacts", value=True)
 
-st.write("Upload 1 or more cheque images. The app shows detection overlay, courtesy and legal crops, transcribed text, and verification.")
+st.write("Upload 1 or more cheque images, or select a pre-loaded sample cheque to test the pipeline.")
 
-uploads = st.file_uploader(
-    "Upload cheque images",
-    type=["tif", "tiff", "png", "jpg", "jpeg", "bmp", "webp"],
-    accept_multiple_files=True,
+# Search for sample images
+sample_dir = Path(__file__).parent / "sample_images"
+sample_files = []
+if sample_dir.exists():
+    sample_files = sorted(
+        list(sample_dir.glob("*.tif")) + 
+        list(sample_dir.glob("*.tiff")) + 
+        list(sample_dir.glob("*.png")) + 
+        list(sample_dir.glob("*.jpg")) + 
+        list(sample_dir.glob("*.jpeg"))
+    )
+
+if "selected_sample" not in st.session_state:
+    if sample_files:
+        st.session_state.selected_sample = random.choice(sample_files)
+    else:
+        st.session_state.selected_sample = None
+
+def select_random_sample():
+    if sample_files:
+        st.session_state.selected_sample = random.choice(sample_files)
+
+input_mode = st.radio(
+    "Select Input Source",
+    ["Select a Sample Cheque (Instant Demo)", "Upload Your Own Cheque(s)"]
 )
 
-run = st.button("Run Pipeline", type="primary", disabled=(not uploads or not det_weights or not ocr_ckpt or not legal_ocr_ckpt or not legal_ocr_base))
+input_files_to_process = []
+
+if input_mode == "Select a Sample Cheque (Instant Demo)":
+    if not sample_files:
+        st.warning("No sample images found in `sample_images/` directory.")
+    else:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"Current Sample: `{st.session_state.selected_sample.name}`")
+        with col2:
+            st.button("🎲 Pick Another Random Cheque", on_click=select_random_sample)
+        
+        if st.session_state.selected_sample:
+            st.image(str(st.session_state.selected_sample), caption="Sample Cheque Preview", width=500)
+            input_files_to_process = [st.session_state.selected_sample]
+else:
+    uploads = st.file_uploader(
+        "Upload cheque images",
+        type=["tif", "tiff", "png", "jpg", "jpeg", "bmp", "webp"],
+        accept_multiple_files=True,
+    )
+    if uploads:
+        input_files_to_process = uploads
+
+run = st.button("Run Pipeline", type="primary", disabled=(not input_files_to_process or not det_weights or not ocr_ckpt or not legal_ocr_ckpt or not legal_ocr_base))
 
 if run:
     legal = None if int(legal_class) < 0 else int(legal_class)
@@ -95,9 +141,13 @@ if run:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         input_paths = []
-        for f in uploads:
-            p = in_dir / f.name
-            p.write_bytes(f.getbuffer())
+        for f in input_files_to_process:
+            if isinstance(f, Path):
+                p = in_dir / f.name
+                p.write_bytes(f.read_bytes())
+            else:
+                p = in_dir / f.name
+                p.write_bytes(f.getbuffer())
             input_paths.append(p)
 
         pipe = ChequeOCRPipeline(cfg)
