@@ -28,7 +28,7 @@ is_modal = os.path.exists("/root/models")
 
 if is_modal:
     default_det_weights = "/root/models/detector/model_final.pth"
-    default_ocr_ckpt = "/root/models/ocr/crnn_ctc_v1/checkpoints/last.pt"
+    default_ocr_ckpt = "/root/app/models/ocr/crnn_ctc_v1/checkpoints/last.pt"
     default_legal_ocr_base = "/root/models/Qwen3.5_model"
     default_legal_ocr_ckpt = "/root/app/models/ocr/legal"
 else:
