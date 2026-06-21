@@ -1,21 +1,106 @@
-# Arabic Cheque Localization & Courtesy Amount OCR Pipeline
+<p align="center">
+  <strong>Arabic Cheque OCR &amp; Verification Pipeline</strong>
+</p>
 
-This repository contains a production-ready, end-to-end computer vision pipeline to localize critical fields on Arabic bank cheques and transcribe the courtesy amount (numerical digits).
+<p align="center">
+  End-to-end field localization, courtesy &amp; legal amount recognition, and cross-verification<br/>
+  for Arabic bank cheques — deployed serverlessly on Modal.
+</p>
 
-The project is split into two primary components:
-- **Part A (Field Localization)**: A Cascade R-CNN detector with a ResNet-50-FPN backbone (implemented in Detectron2) that outputs bounding boxes for the **Courtesy Amount** (numerical digits) and the **Legal Amount** (words in Arabic).
-- **Part B (Courtesy OCR)**: A CRNN (Convolutional Recurrent Neural Network) + CTC (Connectionist Temporal Classification) model that transcribes the cropped courtesy amount region into standard digits (normalizing Arabic-Indic numerals like `١`, `٢`, `٣` to `1`, `2`, `3`).
+<p align="center">
+  <a href="https://redfries--arabic-cheque-ocr-run.modal.run"><img src="https://img.shields.io/badge/Live_Demo-Modal-6C3FC5?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHJ4PSI0IiBmaWxsPSIjNkMzRkM1Ii8+PHRleHQgeD0iNSIgeT0iMTciIGZpbGw9IiNmZmYiIGZvbnQtc2l6ZT0iMTIiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iYm9sZCI+TTwvdGV4dD48L3N2Zz4=" alt="Live Demo"/></a>
+  <a href="https://github.com/redfries/arabic-cheque-ocr"><img src="https://img.shields.io/badge/GitHub-Repo-181717?style=for-the-badge&logo=github" alt="GitHub"/></a>
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11"/>
+  <img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white" alt="PyTorch"/>
+</p>
 
 ---
 
-## Key Features
+## ✨ Live Demo
 
-- **Field Detection (Part A)**: High-precision localization that detects exactly one top-scoring Courtesy box and one top-scoring Legal box per cheque.
-- **Robust OCR (Part B)**: CRNN architecture with Bidirectional LSTM sequence modeling trained using CTC loss. Achieves **96.65% Digit Accuracy** and **87.79% Exact Match** on the test dataset.
-- **Advanced Preprocessing**: Crop enhancement pipeline including border cleanup (frame line suppression), CLAHE contrast adjustment, morphological background subtraction, ink boosting, and aspect-ratio-preserving height normalization.
-- **Streamlit Web Application**: An interactive UI for uploading cheques, visualizing detections, examining step-by-step OCR preprocessing stages, viewing transcription overlays, and downloading predictions.
-- **Bulk CLI Runner**: High-performance CLI script to batch process local directories of images and output formatted predictions in CSV and TXT formats.
-- **Modal Deployment Ready**: Pre-configured script (`modal_app.py`) to easily deploy the web app to [Modal](https://modal.com) as a serverless web endpoint.
+> **Try it now →** [redfries--arabic-cheque-ocr-run.modal.run](https://redfries--arabic-cheque-ocr-run.modal.run)
+>
+> Upload a cheque image or select a built-in sample. The pipeline runs detection, OCR, and verification end-to-end on a GPU-backed Modal container.
+
+---
+
+## Architecture
+
+The system is a **unified three-stage pipeline** — detection, recognition, and verification — running inside a single GPU container.
+
+```mermaid
+graph LR
+    A["🖼️ Cheque Image"] --> B["🔍 Cascade R-CNN<br/><small>Field Detection</small>"]
+    B --> C["✂️ Crop & Preprocess"]
+    C --> D["🔢 CRNN + CTC<br/><small>Courtesy OCR</small>"]
+    C --> E["📝 Qwen3.5 LoRA<br/><small>Legal OCR</small>"]
+    D --> F["✅ Verify"]
+    E --> F
+    F --> G["📊 Results"]
+
+    style A fill:#1a1a2e,stroke:#e8b760,color:#ece8dc
+    style B fill:#16213e,stroke:#e8b760,color:#ece8dc
+    style C fill:#0f3460,stroke:#e8b760,color:#ece8dc
+    style D fill:#533483,stroke:#e8b760,color:#ece8dc
+    style E fill:#533483,stroke:#e8b760,color:#ece8dc
+    style F fill:#2b6777,stroke:#e8b760,color:#ece8dc
+    style G fill:#1a1a2e,stroke:#e8b760,color:#ece8dc
+```
+
+| Stage | Component | Description |
+|:------|:----------|:------------|
+| **Part A** | Cascade R-CNN (ResNet-50 + FPN) | Localizes exactly one courtesy box and one legal box per cheque |
+| **Part B — Courtesy** | CRNN + CTC | Transcribes cropped courtesy digits (Arabic-Indic → standard) |
+| **Part B — Legal** | Qwen3.5-0.8B + LoRA | Reads handwritten Arabic legal amount text via vision-language model |
+| **Verification** | Rule-based parser + fallback | Converts Arabic text → number, cross-checks with courtesy digits |
+
+---
+
+## Metrics
+
+### Part A — Field Detection
+
+Evaluated on our validation split (177 images):
+
+| Metric | Overall | Courtesy | Legal |
+|:-------|--------:|---------:|------:|
+| **Mean IoU** | 80.21% | 80.18% | 80.25% |
+| **Acc @ IoU ≥ 0.50** | 97.46% | 96.61% | 98.31% |
+| **Acc @ IoU ≥ 0.75** | 73.73% | 75.71% | 71.75% |
+
+### Part B — Courtesy Amount OCR
+
+Evaluated on professor test set (598 samples), selected checkpoint `v1_last`:
+
+| Digit Accuracy | Exact Match | Insertions | Deletions | Substitutions |
+|---------------:|------------:|-----------:|----------:|--------------:|
+| **96.65%** | **87.79%** | 26 | 42 | 19 |
+
+### Part B — Legal Amount OCR
+
+Fine-tuned **Qwen3.5-0.8B** with LoRA adapter. Features:
+- Arabic-to-number parser with Levenshtein edit-distance recovery
+- Courtesy-guided image enhancement fallback on mismatch
+- Border cleanup, auto-contrast, and white padding variants
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/app_ui.png" alt="App Interface" width="800"/>
+  <br/><em>Streamlit interface — upload or select a sample cheque</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/pipeline_results.png" alt="Pipeline Results" width="800"/>
+  <br/><em>End-to-end pipeline results — detection overlay, OCR output, verification</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/breakdown.png" alt="Step-by-step Breakdown" width="800"/>
+  <br/><em>Step-by-step image processing breakdown</em>
+</p>
 
 ---
 
@@ -23,128 +108,120 @@ The project is split into two primary components:
 
 ```text
 arabic-cheque-ocr/
-├── .gitignore               # Excludes models, datasets, and local outputs from Git
-├── README.md                # Project documentation
-├── requirements.txt         # Package dependencies
-├── pipeline_core.py         # Core pipeline logic (Model classes, Preprocessing, Inference)
-├── app_streamlit.py         # Streamlit web application
-├── run_cheque_pipeline.py   # Command-line interface for bulk processing
-├── eval_iou_metrics.py      # IoU evaluation metrics for Part A
-├── main.py                  # Label Studio data downloader
-├── setup_models.py          # Helper script to link models locally in the studio
-├── modal_app.py             # Modal.com cloud deployment configuration
-├── notebooks/               # Training notebooks
-│   ├── mainv2.ipynb         # Full detector and OCR training pipeline
-│   └── partb.ipynb          # Additional TrOCR experiments
-└── models/                  # [GIT-IGNORED] Model weights directory
+├── README.md
+├── requirements.txt
+├── pipeline_core.py          # Core pipeline (detection, OCR, verification)
+├── app_streamlit.py          # Streamlit web application
+├── run_cheque_pipeline.py    # CLI for batch processing
+├── modal_app.py              # Modal.com serverless deployment
+├── eval_iou_metrics.py       # IoU evaluation metrics (Part A)
+├── setup_models.py           # Model symlink helper
+├── main.py                   # Label Studio data downloader
+├── docs/
+│   ├── OCR report.md         # Detailed project report
+│   └── screenshots/          # App screenshots
+├── notebooks/
+│   ├── part_A.ipynb          # Part A: Detector training notebook
+│   └── part_B.ipynb          # Part B: OCR training notebook
+├── sample_images/            # 25 sample cheque TIFFs for demo
+└── models/                   # [GIT-IGNORED] Model weights
     ├── detector/
     │   └── model_final.pth
     └── ocr/
-        └── crnn_ctc_v1/
-            ├── metadata.json
-            └── checkpoints/
-                └── last.pt
+        ├── crnn_ctc_v1/
+        │   └── checkpoints/last.pt
+        └── legal/            # Qwen3.5 LoRA adapter weights
 ```
 
 ---
 
 ## Local Setup
 
-### 1. Requirements and Dependencies
+### Prerequisites
 
-Make sure you are using Python 3.8+ (3.10 recommended). Install core dependencies:
+- Python 3.11 (recommended)
+- CUDA-capable GPU (for Qwen3.5 inference)
+
+### Installation
+
 ```bash
+# Clone the repository
+git clone https://github.com/redfries/arabic-cheque-ocr.git
+cd arabic-cheque-ocr
+
+# Install dependencies
 pip install -r requirements.txt
-```
 
-#### Installing Detectron2
-Detectron2 requires pre-built wheels matching your CUDA and PyTorch versions, or a compilation from source.
-- **For CUDA 11.7 + PyTorch 2.0**:
-  ```bash
-  pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu117/torch2.0/index.html
-  ```
-- **To build from source (requires gcc/g++ compilers)**:
-  ```bash
-  pip install 'git+https://github.com/facebookresearch/detectron2.git'
-  ```
+# Install Detectron2 (build from source)
+pip install 'setuptools<70'
+pip install 'git+https://github.com/facebookresearch/detectron2.git'
 
-### 2. Model Setup (Inside the Studio Workspace)
-
-Run the included model setup helper to automatically create directory structures and symlink the models from the studio workspace folders:
-```bash
+# Set up model symlinks (Lightning.ai studio)
 python setup_models.py
 ```
-
-*Note: For deployment in a clean environment outside this studio, manually place `model_final.pth` under `models/detector/` and the OCR checkpoint directory structure under `models/ocr/` as shown in the directory tree above.*
 
 ---
 
 ## Usage
 
-### 1. Running the Command Line Interface (CLI)
-
-Use `run_cheque_pipeline.py` to batch-process a single image or a directory of cheque images:
+### CLI — Batch Processing
 
 ```bash
 python run_cheque_pipeline.py \
   --input /path/to/images \
-  --out /path/to/output_folder
-```
-
-By default, the script uses the weights under `models/`. You can specify custom weights using flags:
-```bash
-python run_cheque_pipeline.py \
-  --input /path/to/images \
-  --det-weights /path/to/custom_detector.pth \
-  --ocr-ckpt /path/to/custom_ocr.pt \
-  --out /path/to/output_folder \
+  --out /path/to/output \
   --det-thresh 0.30 \
   --pad-frac 0.04
 ```
 
-This runs detection and OCR, draws visual overlays, and creates three main output files inside your output directory:
-- `predictions.csv`: Detailed CSV showing bounding boxes, confidence scores, OCR outputs, and status.
-- `predictions.txt`: TSV file containing `<image_stem>\t<predicted_digits>`.
-- `run_summary.json`: JSON summary of the run statistics.
-- `overlays/`, `crops/`, `stages/`: Visual debugging folders.
+**Outputs:** `predictions.csv`, `predictions.txt`, `run_summary.json`, `overlays/`, `crops/`, `stages/`
 
-### 2. Running the Streamlit UI
+### Streamlit — Interactive Web UI
 
-Start the Streamlit web application:
-```bash
-streamlit run app_streamlit.py
-```
-
-If running on a cloud environment like Lightning.ai, host it externally:
 ```bash
 streamlit run app_streamlit.py --server.address 0.0.0.0 --server.port 8501
 ```
 
-Open the provided URL, upload your cheque images, and interact with the pipeline. You will be able to download `outputs.zip` containing all overlays and prediction spreadsheets directly from the interface.
+### Modal — Cloud Deployment
+
+```bash
+# Install and authenticate
+pip install modal
+modal setup
+
+# Create volume and upload model weights
+modal volume create cheque-ocr-models
+modal volume put cheque-ocr-models models/detector /detector
+modal volume put cheque-ocr-models models/Qwen3.5_model /Qwen3.5_model
+
+# Deploy
+modal deploy modal_app.py
+```
+
+The app will be available at the URL Modal provides (currently live at [redfries--arabic-cheque-ocr-run.modal.run](https://redfries--arabic-cheque-ocr-run.modal.run)).
 
 ---
 
-## Deploying to Modal.com (Cloud Hosting)
+## Tech Stack
 
-The project includes `modal_app.py` for cloud hosting on [Modal](https://modal.com). 
+| Layer | Technology |
+|:------|:-----------|
+| **Detection** | Detectron2 · Cascade R-CNN · ResNet-50 + FPN |
+| **Courtesy OCR** | Custom CRNN + BiLSTM + CTC (PyTorch) |
+| **Legal OCR** | Qwen3.5-0.8B Vision-Language + LoRA (PEFT) |
+| **Preprocessing** | OpenCV · Pillow · CLAHE · Morphological ops |
+| **Web UI** | Streamlit |
+| **Deployment** | Modal.com (A10G GPU, serverless) |
+| **Training** | PyTorch · Transformers · Hugging Face |
 
-To deploy:
-1. **Install Modal**:
-   ```bash
-   pip install modal
-   ```
-2. **Authenticate with Modal**:
-   ```bash
-   modal setup
-   ```
-3. **Create the Model Volume and Upload Weights**:
-   Create a Modal Volume to store the large weights files and upload your local `models/` directory:
-   ```bash
-   modal volume create cheque-ocr-models
-   modal volume put cheque-ocr-models models/ /
-   ```
-4. **Deploy the App**:
-   ```bash
-   modal deploy modal_app.py
-   ```
-   Modal will automatically build the container image, install PyTorch, CUDA, and Detectron2, mount your model weights volume, and provide a public URL hosting your Streamlit UI.
+---
+
+## Acknowledgements
+
+This project was developed as a **Master's term project** at **King Fahd University of Petroleum and Minerals (KFUPM)**.
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ by <a href="https://infinitys.me">Shabaaz Hussain</a></sub>
+</p>
