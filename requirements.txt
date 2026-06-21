@@ -13,5 +13,7 @@ numpy
 opencv-python
 Pillow
 
-# Web UI
+# Web UI & Deployment
 streamlit
+modal
+setuptools<70
