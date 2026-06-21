@@ -32,12 +32,20 @@ with st.sidebar:
     courtesy_class = st.number_input("Courtesy class id", min_value=0, max_value=10, value=0, step=1)
     legal_class = st.number_input("Legal class id (-1 = auto)", min_value=-1, max_value=10, value=-1, step=1)
 
-    st.header("Crop + OCR")
+    st.header("Courtesy Crop + OCR")
     pad_frac = st.slider("Courtesy crop padding", 0.00, 0.20, 0.04, 0.01)
     do_line_cleanup = st.checkbox("Remove long lines", value=True)
+    
+    st.header("Legal Crop + OCR (Qwen3.5)")
+    legal_ocr_ckpt = st.text_input("Part B Legal OCR adapter", value="models/ocr/legal")
+    legal_ocr_base = st.text_input("Part B Legal OCR base model", value="models/Qwen3.5_model")
+    legal_pad_frac = st.slider("Legal crop padding", 0.00, 0.20, 0.05, 0.01)
+    do_fallback = st.checkbox("Enable fallback enhancements", value=True)
+    
+    st.header("Output Settings")
     save_debug = st.checkbox("Save debug artifacts", value=True)
 
-st.write("Upload 1 or more cheque images. The app shows detection overlay and OCR preprocessing stages.")
+st.write("Upload 1 or more cheque images. The app shows detection overlay, courtesy and legal crops, transcribed text, and verification.")
 
 uploads = st.file_uploader(
     "Upload cheque images",
@@ -45,7 +53,7 @@ uploads = st.file_uploader(
     accept_multiple_files=True,
 )
 
-run = st.button("Run", type="primary", disabled=(not uploads or not det_weights or not ocr_ckpt))
+run = st.button("Run Pipeline", type="primary", disabled=(not uploads or not det_weights or not ocr_ckpt or not legal_ocr_ckpt or not legal_ocr_base))
 
 if run:
     legal = None if int(legal_class) < 0 else int(legal_class)
@@ -58,6 +66,10 @@ if run:
         legal_pred_class=legal,
         pad_frac=float(pad_frac),
         do_line_cleanup=bool(do_line_cleanup),
+        legal_ocr_ckpt=legal_ocr_ckpt,
+        legal_ocr_base=legal_ocr_base,
+        legal_pad_frac=float(legal_pad_frac),
+        do_fallback=bool(do_fallback),
     )
 
     with tempfile.TemporaryDirectory() as td:
@@ -86,7 +98,7 @@ if run:
         csv_path, txt_path = write_outputs(results, out_dir=out_dir)
 
         st.success(f"Done. Processed {len(results)} images.")
-        st.dataframe([{k: r.get(k) for k in ["stem", "ocr_digits", "courtesy_score", "legal_score", "status"]} for r in results])
+        st.dataframe([{k: r.get(k) for k in ["stem", "ocr_digits", "ocr_legal_text", "verified", "legal_parsed_amount", "courtesy_score", "legal_score", "status"]} for r in results])
 
         st.divider()
         st.subheader("Per-image visualization")
@@ -105,19 +117,38 @@ if run:
                     else:
                         st.warning("Overlay not found.")
 
-                    st.markdown(f"**Digits:** `{r.get('ocr_digits','')}`")
+                    # Verification Status
+                    verified = r.get("verified")
+                    if verified:
+                        st.success("✅ **Verified (Courtesy matches Legal amount!)**")
+                    else:
+                        st.error("❌ **Not Verified (Courtesy/Legal mismatch or missing)**")
+
+                    st.markdown(f"**Courtesy Digits:** `{r.get('ocr_digits','')}`")
+                    st.markdown(f"**Legal Text (Arabic):** `{r.get('ocr_legal_text','')}`")
+                    if r.get("legal_parsed_amount") is not None:
+                        st.markdown(f"**Parsed Legal Amount:** `{r.get('legal_parsed_amount')}`")
+
                     if r.get("ocr_raw"):
-                        st.caption(f"Raw decode: {r.get('ocr_raw')}")
+                        st.caption(f"Raw courtesy decode: {r.get('ocr_raw')}")
                     dbg = r.get("preprocess_debug") or {}
                     if dbg:
                         st.caption(f"Line cleanup applied: {dbg.get('line_cleanup_applied')} | Ink keep ratio: {dbg.get('ink_keep_ratio')}")
 
                 with colB:
+                    st.subheader("Crops")
+                    
                     crop = Path(r.get("crop_path") or "")
                     if crop.exists():
                         st.image(str(crop), caption="Courtesy crop (raw)", use_column_width=True)
                     else:
                         st.warning("Courtesy crop missing.")
+
+                    legal_crop = Path(r.get("legal_crop_path") or "")
+                    if legal_crop.exists():
+                        st.image(str(legal_crop), caption="Legal crop (raw)", use_column_width=True)
+                    else:
+                        st.warning("Legal crop missing.")
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:

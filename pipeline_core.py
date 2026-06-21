@@ -15,6 +15,7 @@ import re
 import time
 
 import numpy as np
+from PIL import Image, ImageOps, ImageEnhance
 
 try:
     import cv2  # type: ignore
@@ -420,6 +421,492 @@ def clip_xyxy(x1: float, y1: float, x2: float, y2: float, W: int, H: int) -> Tup
 # -----------------------------
 # Pipeline
 # -----------------------------
+# -----------------------------
+# PIL Image Enhancements for Fallback
+# -----------------------------
+def ensure_rgb(img: Image.Image) -> Image.Image:
+    return img.convert("RGB")
+
+def add_white_padding(img: Image.Image, pad: int = 24) -> Image.Image:
+    img = ensure_rgb(img)
+    return ImageOps.expand(img, border=pad, fill="white")
+
+def whiten_outer_border(img: Image.Image, border: int = 8) -> Image.Image:
+    img = ensure_rgb(img)
+    out = img.copy()
+    px = out.load()
+    w, h = out.size
+
+    for x in range(w):
+        for y in range(min(border, h)):
+            px[x, y] = (255, 255, 255)
+            px[x, h - 1 - y] = (255, 255, 255)
+
+    for y in range(h):
+        for x in range(min(border, w)):
+            px[x, y] = (255, 255, 255)
+            px[w - 1 - x, y] = (255, 255, 255)
+
+    return out
+
+def enhance_autocontrast_pad(img: Image.Image) -> Image.Image:
+    img = ensure_rgb(img)
+    img = add_white_padding(img, pad=24)
+    img = ImageOps.autocontrast(img)
+    img = ImageEnhance.Contrast(img).enhance(1.25)
+    img = ImageEnhance.Sharpness(img).enhance(1.15)
+    return img
+
+def enhance_border_auto(img: Image.Image) -> Image.Image:
+    img = ensure_rgb(img)
+    img = whiten_outer_border(img, border=8)
+    img = add_white_padding(img, pad=18)
+    img = ImageOps.autocontrast(img)
+    img = ImageEnhance.Contrast(img).enhance(1.20)
+    return img
+
+# -----------------------------
+# Arabic Legal Amount Parser v2_fix2
+# -----------------------------
+AR_DIACRITICS_RE = re.compile(r"[\u064B-\u065F\u0670]")
+TATWEEL_RE = re.compile(r"ـ+")
+MULTISPACE_RE = re.compile(r"\s+")
+PUNCT_RE = re.compile(r"[^\w\s\u0600-\u06FF]")
+DIGIT_RE = re.compile(r"[0-9\u0660-\u0669\u06F0-\u06F9]+")
+
+WORD_REPLACEMENTS = {
+    "مايه": "ماية",
+    "مائه": "ماية",
+    "مائة": "ماية",
+    "مئة": "ماية",
+    "ميه": "ماية",
+    "مية": "ماية",
+
+    "مائتان": "مايتان",
+    "ماتين": "مايتين",
+    "ميتين": "مايتين",
+    "ميتان": "مايتان",
+    "ميتا": "مايتان",
+    "ميتار": "مايتان",
+
+    "ثلاثمايه": "ثلاثماية",
+    "ثلاثمائة": "ثلاثماية",
+    "ثلاثمائه": "ثلاثماية",
+    "ثلامايه": "ثلاثماية",
+    "ثلاماية": "ثلاثماية",
+
+    "اربعمايه": "اربعماية",
+    "اربعمائة": "اربعماية",
+    "اربعمائه": "اربعماية",
+    "اربعةماية": "اربعماية",
+    "ربعماية": "اربعماية",
+
+    "خمسمايه": "خمسماية",
+    "خمسمائة": "خمسماية",
+    "خمسمائه": "خمسماية",
+    "خمسايه": "خمسماية",
+    "خمساية": "خمسماية",
+
+    "ستمايه": "ستماية",
+    "ستمائة": "ستماية",
+    "ستمائه": "ستماية",
+    "ستميه": "ستماية",
+
+    "سبعمايه": "سبعماية",
+    "سبعمائة": "سبعماية",
+    "سبعمائه": "سبعماية",
+
+    "ثمانمايه": "ثمانماية",
+    "ثمانمائة": "ثمانماية",
+    "ثمانمائه": "ثمانماية",
+    "ثمانميه": "ثمانماية",
+    "ثمانيمايه": "ثمانماية",
+
+    "تسعمايه": "تسعماية",
+    "تسعمائة": "تسعماية",
+    "تسعمائه": "تسعماية",
+
+    "الاف": "الف",
+    "آلاف": "الف",
+    "اف": "الف",
+
+    "ريالا": "ريال",
+    "ريالات": "ريال",
+    "رسالا": "ريال",
+    "رسال": "ريال",
+
+    "عشره": "عشرة",
+    "تسعه": "تسعة",
+    "اربعه": "اربعة",
+    "ارعة": "اربعة",
+    "ثلاثه": "ثلاثة",
+    "ثلاون": "ثلاثون",
+    "واحده": "واحدة",
+    "واحدي": "واحد",
+    "سته": "ستة",
+    "سبعه": "سبعة",
+    "ثمانيه": "ثمانية",
+    "خمسه": "خمسة",
+    "سكون": "ستون",
+}
+
+SPECIAL_MERGED_WORDS = {
+    "عشرالف": ["عشرة", "الف"],
+    "عشرالاف": ["عشرة", "الف"],
+    "ميتالف": ["مايتان", "الف"],
+    "مئتيالف": ["مايتان", "الف"],
+    "مائتيالف": ["مايتان", "الف"],
+}
+
+NOISE_WORDS = {
+    "رسوم",
+    "جمركيه",
+    "جمركية",
+    "امانه",
+    "امانة",
+    "هاشما",
+    "ه",
+}
+
+IGNORE_WORDS = {
+    "و",
+    "فقط",
+    "ريال",
+    "لا",
+    "غير",
+    "لاغير",
+    "وقدره",
+    "وقدرة",
+    "قدره",
+    "قدرة",
+    "مبلغ",
+    "سعودي",
+    "سعودية",
+    "مقابل",
+    "على",
+    "الحساب",
+    "حساب",
+    "هللة",
+    "هلله",
+    "هلاله",
+    "هلالة",
+} | NOISE_WORDS
+
+NUMBER_VALUES = {
+    "صفر": 0,
+    "واحد": 1,
+    "واحدة": 1,
+    "احد": 1,
+    "احدى": 1,
+    "اثنين": 2,
+    "اثنان": 2,
+    "اثنتين": 2,
+    "اثنتان": 2,
+    "اثني": 2,
+    "اثna": 2, # Wait, let's write "اثنا" not "اثna"
+    "اثنا": 2,
+    "اثنتا": 2,
+    "ثلاثة": 3,
+    "ثلاث": 3,
+    "اربعة": 4,
+    "اربع": 4,
+    "خمسة": 5,
+    "خمس": 5,
+    "ستة": 6,
+    "ست": 6,
+    "سبعة": 7,
+    "سبع": 7,
+    "ثمانية": 8,
+    "ثمان": 8,
+    "تسعة": 9,
+    "تسع": 9,
+    "عشرة": 10,
+    "عشر": 10,
+    "عشرون": 20,
+    "عشرين": 20,
+    "ثلاثون": 30,
+    "ثلاثين": 30,
+    "اربعون": 40,
+    "اربعين": 40,
+    "خمسون": 50,
+    "خمسين": 50,
+    "ستون": 60,
+    "ستين": 60,
+    "سبعون": 70,
+    "سبعين": 70,
+    "ثمانون": 80,
+    "ثمانين": 80,
+    "تسعون": 90,
+    "تسعين": 90,
+    "ماية": 100,
+    "مايتان": 200,
+    "مايتين": 200,
+    "ثلاثماية": 300,
+    "اربعماية": 400,
+    "خمسماية": 500,
+    "ستماية": 600,
+    "سبعماية": 700,
+    "ثمانماية": 800,
+    "تسعماية": 900,
+    "الفين": 2000,
+    "الفان": 2000,
+    "الفي": 2000,
+    "الفا": 2000,
+}
+
+MULTIPLIERS = {
+    "الف": 1000,
+    "مليون": 1000000,
+}
+
+AMOUNT_WORDS = set(NUMBER_VALUES) | set(MULTIPLIERS)
+KNOWN_WORDS = AMOUNT_WORDS | IGNORE_WORDS
+
+def normalize_arabic_base(text: str) -> str:
+    text = str(text or "")
+    text = text.replace("\u200f", " ").replace("\u200e", " ")
+
+    text = AR_DIACRITICS_RE.sub("", text)
+    text = TATWEEL_RE.sub("", text)
+
+    text = re.sub(r"[أإآٱ]", "ا", text)
+    text = text.replace("ى", "ي")
+    text = text.replace("ؤ", "و")
+    text = text.replace("ئ", "ي")
+
+    text = text.replace("لاغير", "لا غير")
+    text = text.replace("لا غير", " لا غير ")
+
+    text = PUNCT_RE.sub(" ", text)
+    text = DIGIT_RE.sub(" ", text)
+
+    text = MULTISPACE_RE.sub(" ", text).strip()
+    return text
+
+def normalize_single_word(word: str) -> str:
+    word = str(word or "").strip()
+    return WORD_REPLACEMENTS.get(word, word)
+
+def levenshtein_distance(a: Union[str, list], b: Union[str, list]) -> int:
+    a = list(str(a or ""))
+    b = list(str(b or ""))
+
+    dp = list(range(len(b) + 1))
+
+    for i, ca in enumerate(a, 1):
+        prev = dp[0]
+        dp[0] = i
+
+        for j, cb in enumerate(b, 1):
+            old = dp[j]
+
+            if ca == cb:
+                dp[j] = prev
+            else:
+                dp[j] = 1 + min(prev, dp[j], dp[j - 1])
+
+            prev = old
+
+    return dp[-1]
+
+def best_edit_match(token: str, candidates: set) -> Optional[Dict[str, Union[str, int, float]]]:
+    token = str(token or "")
+    best = None
+
+    for cand in candidates:
+        dist = levenshtein_distance(token, cand)
+        ratio = dist / max(len(token), len(cand), 1)
+
+        item = {
+            "candidate": cand,
+            "distance": dist,
+            "ratio": ratio,
+        }
+
+        if best is None:
+            best = item
+        else:
+            if (dist, ratio, len(cand)) < (best["distance"], best["ratio"], len(best["candidate"])):
+                best = item
+
+    return best
+
+def edit_threshold_ok(token: str, match: Optional[Dict[str, Union[str, int, float]]]) -> bool:
+    if match is None:
+        return False
+
+    token_len = len(str(token or ""))
+    dist = int(match["distance"])
+    ratio = float(match["ratio"])
+
+    if token_len <= 3:
+        return dist <= 1 and ratio <= 0.34
+
+    if token_len <= 6:
+        return dist <= 2 and ratio <= 0.34
+
+    return dist <= 3 and ratio <= 0.34
+
+def try_split_known_word(word: str) -> Tuple[Optional[List[str]], str]:
+    word = str(word or "")
+
+    if word in SPECIAL_MERGED_WORDS:
+        return SPECIAL_MERGED_WORDS[word], "special_merged"
+
+    for i in range(2, len(word) - 1):
+        left = normalize_single_word(word[:i])
+        right = normalize_single_word(word[i:])
+
+        if left in AMOUNT_WORDS and right in AMOUNT_WORDS:
+            return [left, right], "split_direct"
+
+    return None, ""
+
+def recover_unknown_word(word: str) -> Tuple[List[str], List[str]]:
+    original = str(word or "")
+    word = normalize_single_word(original)
+
+    if not word:
+        return [], [f"{original}->empty"]
+
+    if word in SPECIAL_MERGED_WORDS:
+        return SPECIAL_MERGED_WORDS[word], [f"{original}->{'+'.join(SPECIAL_MERGED_WORDS[word])}:special_merged"]
+
+    if word in KNOWN_WORDS:
+        return [word], []
+
+    split_tokens, split_reason = try_split_known_word(word)
+    if split_tokens:
+        return split_tokens, [f"{original}->{'+'.join(split_tokens)}:{split_reason}"]
+
+    match = best_edit_match(word, AMOUNT_WORDS)
+
+    if edit_threshold_ok(word, match):
+        corrected = match["candidate"]
+        return [corrected], [f"{original}->{corrected}:edit_d{match['distance']}"]
+
+    return [word], [f"{original}->UNKNOWN"]
+
+def tokenize_legal_text_parser_v2_fix2(text: str) -> Tuple[List[str], List[str]]:
+    text = normalize_arabic_base(text)
+
+    text = text.replace("عشرالف", "عشرة الف")
+    text = text.replace("عشر الف", "عشرة الف")
+    text = text.replace("لاغير", "لا غير")
+
+    raw_words = text.split()
+
+    tokens = []
+    actions = []
+
+    for raw_word in raw_words:
+        word = normalize_single_word(raw_word)
+
+        if word in SPECIAL_MERGED_WORDS:
+            new_tokens = SPECIAL_MERGED_WORDS[word]
+            tokens.extend(new_tokens)
+            actions.append(f"{raw_word}->{'+'.join(new_tokens)}:special_merged")
+            continue
+
+        if word in KNOWN_WORDS:
+            tokens.append(word)
+            continue
+
+        if word.startswith("و") and len(word) > 2:
+            remaining = word
+
+            while remaining.startswith("و") and len(remaining) > 2:
+                tokens.append("و")
+                actions.append(f"{remaining}->و+{remaining[1:]}:split_w")
+                remaining = remaining[1:]
+
+            recovered_tokens, recovered_actions = recover_unknown_word(remaining)
+            tokens.extend(recovered_tokens)
+            actions.extend(recovered_actions)
+            continue
+
+        recovered_tokens, recovered_actions = recover_unknown_word(word)
+        tokens.extend(recovered_tokens)
+        actions.extend(recovered_actions)
+
+    return tokens, actions
+
+def parse_tokens_to_amount_fix2(tokens: List[str]) -> Dict[str, Union[Optional[int], str, List[str]]]:
+    total = 0
+    current = 0
+
+    unknown = []
+    used_number_tokens = []
+    seen_currency_after_amount = False
+
+    for token in tokens:
+        if token == "ريال" and used_number_tokens:
+            seen_currency_after_amount = True
+            continue
+
+        if seen_currency_after_amount:
+            continue
+
+        if token in IGNORE_WORDS:
+            continue
+
+        if token in NUMBER_VALUES:
+            value = NUMBER_VALUES[token]
+
+            if token == "ماية" and 1 <= current <= 9:
+                current = current * 100
+            else:
+                current += value
+
+            used_number_tokens.append(token)
+            continue
+
+        if token in MULTIPLIERS:
+            multiplier = MULTIPLIERS[token]
+
+            if current == 0:
+                current = 1
+
+            total += current * multiplier
+            current = 0
+
+            used_number_tokens.append(token)
+            continue
+
+        unknown.append(token)
+
+    total += current
+
+    if not used_number_tokens:
+        return {
+            "amount": None,
+            "status": "no_number_tokens",
+            "unknown": unknown,
+        }
+
+    if unknown:
+        return {
+            "amount": total,
+            "status": "parsed_with_unknown",
+            "unknown": unknown,
+        }
+
+    return {
+        "amount": total,
+        "status": "parsed_ok",
+        "unknown": [],
+    }
+
+def parse_legal_amount_v2_fix2(text: str) -> Dict:
+    tokens, actions = tokenize_legal_text_parser_v2_fix2(text)
+    parsed = parse_tokens_to_amount_fix2(tokens)
+    parsed["tokens"] = tokens
+    parsed["actions"] = actions
+    return parsed
+
+# -----------------------------
+# Pipeline Config and Core
+# -----------------------------
 @dataclass
 class PipelineConfig:
     det_weights: str
@@ -434,18 +921,26 @@ class PipelineConfig:
     pad_frac: float = 0.04
     do_line_cleanup: bool = True
 
+    # New options for legal ocr
+    legal_ocr_ckpt: str = "models/ocr/legal"
+    legal_ocr_base: str = "models/Qwen3.5_model"
+    legal_pad_frac: float = 0.05
+    do_fallback: bool = True
+
 
 class ChequeOCRPipeline:
     def __init__(self, cfg: PipelineConfig):
         self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        print("Loading detector predictor...")
         self.predictor, _ = build_predictor(
             det_weights=cfg.det_weights,
             score_thresh=cfg.det_score_thresh,
             device_str=cfg.det_device,
         )
 
+        print("Loading courtesy OCR model...")
         self.ocr_model, self.ocr_meta, self.idx2char, self.blank_idx, self.enh_cfg, self.target_h = load_model_from_ckpt(
             cfg.ocr_ckpt, device=self.device
         )
@@ -454,6 +949,42 @@ class ChequeOCRPipeline:
             self.legal_class = 1 if int(cfg.courtesy_pred_class) == 0 else 0
         else:
             self.legal_class = int(cfg.legal_pred_class)
+
+        # Load Qwen3.5 processor & model
+        print("Loading Qwen3.5 processor...")
+        from transformers import AutoProcessor, Qwen3_5ForConditionalGeneration
+        from peft import PeftModel
+
+        self.legal_processor = AutoProcessor.from_pretrained(
+            cfg.legal_ocr_base, local_files_only=True, trust_remote_code=True
+        )
+        self.legal_tokenizer = self.legal_processor.tokenizer
+        if self.legal_tokenizer.pad_token_id is None:
+            self.legal_tokenizer.pad_token = self.legal_tokenizer.eos_token
+
+        print("Loading Qwen3.5 base model...")
+        has_cuda = torch.cuda.is_available()
+        dtype = torch.bfloat16 if has_cuda else torch.float32
+
+        if has_cuda:
+            base_model = Qwen3_5ForConditionalGeneration.from_pretrained(
+                cfg.legal_ocr_base,
+                local_files_only=True,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+                device_map="auto"
+            )
+        else:
+            base_model = Qwen3_5ForConditionalGeneration.from_pretrained(
+                cfg.legal_ocr_base,
+                local_files_only=True,
+                trust_remote_code=True,
+                torch_dtype=dtype
+            ).to(self.device)
+
+        print("Attaching LoRA adapter...")
+        self.legal_model = PeftModel.from_pretrained(base_model, cfg.legal_ocr_ckpt)
+        self.legal_model.eval()
 
     def process_one(self, img_path: Union[str, Path], out_dir: Union[str, Path], save_debug: bool = True) -> Dict:
         t0 = time.time()
@@ -485,9 +1016,13 @@ class ChequeOCRPipeline:
             "legal_score": legal_score,
             "overlay_path": str(out_dir / "overlays" / f"{stem}.png"),
             "crop_path": "",
+            "legal_crop_path": "",
             "stage_paths": {},
             "ocr_raw": "",
             "ocr_digits": "",
+            "ocr_legal_text": "",
+            "verified": False,
+            "legal_parsed_amount": None,
             "status": "ok",
             "time_sec": None,
             "preprocess_debug": {},
@@ -506,6 +1041,33 @@ class ChequeOCRPipeline:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, color_bgr, 2)
             return (x1i, y1i, x2i, y2i)
 
+        # Helper for Qwen inference
+        def run_qwen_ocr(pil_img: Image.Image) -> str:
+            from qwen_vl_utils import process_vision_info
+            import torch
+            PROMPT = "استخرج نص المبلغ العربي المكتوب بخط اليد فقط. أعد النص فقط."
+            messages = [{"role": "user", "content": [
+                {"type": "image", "image": pil_img},
+                {"type": "text", "text": PROMPT},
+            ]}]
+            text = self.legal_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs, _ = process_vision_info(messages)
+            inputs = self.legal_processor(
+                text=[text], images=image_inputs, padding=True, return_tensors="pt"
+            ).to(self.legal_model.device)
+
+            with torch.no_grad():
+                out = self.legal_model.generate(
+                    **inputs,
+                    max_new_tokens=48,
+                    do_sample=False,
+                    pad_token_id=self.legal_tokenizer.eos_token_id
+                )
+            decoded = self.legal_processor.batch_decode(
+                out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True
+            )[0]
+            return decoded.strip().splitlines()[0] if decoded.strip() else ""
+
         # No boxes
         if courtesy_box is None and legal_box is None:
             result["status"] = "missing_detection"
@@ -515,70 +1077,157 @@ class ChequeOCRPipeline:
             (out_dir / "json" / f"{stem}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
             return result
 
-        # Courtesy missing
-        if courtesy_box is None:
+        # Courtesy branch
+        if courtesy_box is not None:
+            # Crop courtesy with padding
+            x1, y1, x2, y2 = courtesy_box
+            bw = x2 - x1
+            bh = y2 - y1
+            x1 -= self.cfg.pad_frac * bw
+            x2 += self.cfg.pad_frac * bw
+            y1 -= self.cfg.pad_frac * bh
+            y2 += self.cfg.pad_frac * bh
+            x1i, y1i, x2i, y2i = clip_xyxy(x1, y1, x2, y2, W, H)
+
+            crop_bgr = bgr[y1i:y2i, x1i:x2i]
+            crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+
+            crop_path = out_dir / "crops" / f"{stem}.png"
+            cv2.imwrite(str(crop_path), crop_gray)
+            result["crop_path"] = str(crop_path)
+
+            # Stage preprocessing
+            stages, enh_rs, dbg = preprocess_crop_array(
+                crop_gray, enh_cfg=self.enh_cfg, target_h=self.target_h, do_line_cleanup=self.cfg.do_line_cleanup
+            )
+            result["preprocess_debug"] = dbg
+
+            stage_paths: Dict[str, str] = {}
+            for k, im in stages.items():
+                sp = out_dir / "stages" / f"{stem}_{k}.png"
+                cv2.imwrite(str(sp), im)
+                stage_paths[k] = str(sp)
+            result["stage_paths"] = stage_paths
+
+            # OCR
+            try:
+                x = torch.from_numpy(enh_rs).float().div(255.0).unsqueeze(0).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    log_probs = self.ocr_model(x)
+                    pred = torch.argmax(log_probs, dim=-1).squeeze(1).detach().cpu().numpy().tolist()
+                raw = decode_greedy_ctc(pred, self.blank_idx, self.idx2char)
+                digits = digits_only_normalized(raw)
+                result["ocr_raw"] = raw
+                result["ocr_digits"] = digits
+            except Exception:
+                result["status"] = "ocr_failed"
+        else:
             result["status"] = "missing_courtesy_box"
-            if save_debug:
-                vis = bgr.copy()
-                draw_box(vis, legal_box, (0, 255, 0), f"LEGAL {legal_score:.2f}" if legal_score is not None else "LEGAL")
-                cv2.imwrite(str(overlay_path), vis)
-            result["time_sec"] = round(time.time() - t0, 4)
-            (out_dir / "json" / f"{stem}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-            return result
 
-        # Crop courtesy with padding
-        x1, y1, x2, y2 = courtesy_box
-        bw = x2 - x1
-        bh = y2 - y1
-        x1 -= self.cfg.pad_frac * bw
-        x2 += self.cfg.pad_frac * bw
-        y1 -= self.cfg.pad_frac * bh
-        y2 += self.cfg.pad_frac * bh
-        x1i, y1i, x2i, y2i = clip_xyxy(x1, y1, x2, y2, W, H)
+        # Legal branch
+        if legal_box is not None:
+            lx1, ly1, lx2, ly2 = legal_box
+            lbw = lx2 - lx1
+            lbh = ly2 - ly1
+            lx1 -= self.cfg.legal_pad_frac * lbw
+            lx2 += self.cfg.legal_pad_frac * lbw
+            ly1 -= self.cfg.legal_pad_frac * lbh
+            ly2 += self.cfg.legal_pad_frac * lbh
+            lx1i, ly1i, lx2i, ly2i = clip_xyxy(lx1, ly1, lx2, ly2, W, H)
 
-        crop_bgr = bgr[y1i:y2i, x1i:x2i]
-        crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+            legal_crop_bgr = bgr[ly1i:ly2i, lx1i:lx2i]
+            legal_crop_gray = cv2.cvtColor(legal_crop_bgr, cv2.COLOR_BGR2GRAY)
 
-        crop_path = out_dir / "crops" / f"{stem}.png"
-        cv2.imwrite(str(crop_path), crop_gray)
-        result["crop_path"] = str(crop_path)
+            l_crop_path = out_dir / "crops" / f"{stem}_legal.png"
+            cv2.imwrite(str(l_crop_path), legal_crop_gray)
+            result["legal_crop_path"] = str(l_crop_path)
 
-        # Stage preprocessing
-        stages, enh_rs, dbg = preprocess_crop_array(
-            crop_gray, enh_cfg=self.enh_cfg, target_h=self.target_h, do_line_cleanup=self.cfg.do_line_cleanup
-        )
-        result["preprocess_debug"] = dbg
+            # Convert BGR to RGB PIL image for Qwen
+            legal_crop_rgb = cv2.cvtColor(legal_crop_bgr, cv2.COLOR_BGR2RGB)
+            pil_crop_orig = Image.fromarray(legal_crop_rgb)
 
-        stage_paths: Dict[str, str] = {}
-        for k, im in stages.items():
-            sp = out_dir / "stages" / f"{stem}_{k}.png"
-            cv2.imwrite(str(sp), im)
-            stage_paths[k] = str(sp)
-        result["stage_paths"] = stage_paths
+            # Run Qwen OCR
+            try:
+                orig_pred = run_qwen_ocr(pil_crop_orig)
+                orig_parse = parse_legal_amount_v2_fix2(orig_pred)
+                orig_val = orig_parse.get("amount")
 
-        # OCR
-        try:
-            x = torch.from_numpy(enh_rs).float().div(255.0).unsqueeze(0).unsqueeze(0).to(self.device)
-            with torch.no_grad():
-                log_probs = self.ocr_model(x)
-                pred = torch.argmax(log_probs, dim=-1).squeeze(1).detach().cpu().numpy().tolist()
-            raw = decode_greedy_ctc(pred, self.blank_idx, self.idx2char)
-            digits = digits_only_normalized(raw)
-            result["ocr_raw"] = raw
-            result["ocr_digits"] = digits
-        except Exception:
-            result["status"] = "ocr_failed"
+                chosen_text = orig_pred
+                chosen_val = orig_val
+                verified = False
+
+                courtesy_val = None
+                if result.get("ocr_digits"):
+                    try:
+                        courtesy_val = int(result["ocr_digits"])
+                    except ValueError:
+                        pass
+
+                if courtesy_val is not None and orig_val == courtesy_val:
+                    verified = True
+                elif courtesy_val is not None and self.cfg.do_fallback:
+                    # Run fallback enhancements
+                    enhanced_border_pil = enhance_border_auto(pil_crop_orig)
+                    enhanced_pad_pil = enhance_autocontrast_pad(pil_crop_orig)
+
+                    # Run OCR on border_autocontrast
+                    border_pred = run_qwen_ocr(enhanced_border_pil)
+                    border_parse = parse_legal_amount_v2_fix2(border_pred)
+                    border_val = border_parse.get("amount")
+
+                    # Run OCR on pad_autocontrast
+                    pad_pred = run_qwen_ocr(enhanced_pad_pil)
+                    pad_parse = parse_legal_amount_v2_fix2(pad_pred)
+                    pad_val = pad_parse.get("amount")
+
+                    if border_val == courtesy_val:
+                        chosen_text = border_pred
+                        chosen_val = border_val
+                        verified = True
+                    elif pad_val == courtesy_val:
+                        chosen_text = pad_pred
+                        chosen_val = pad_val
+                        verified = True
+
+                result["ocr_legal_text"] = chosen_text
+                result["verified"] = verified
+                result["legal_parsed_amount"] = chosen_val
+            except Exception as e:
+                print(f"Legal OCR failed for {stem}: {e}")
+                if result["status"] == "ok":
+                    result["status"] = "legal_ocr_failed"
+        else:
+            if result["status"] == "ok":
+                result["status"] = "missing_legal_box"
 
         # Overlay full cheque
         if save_debug:
             vis = bgr.copy()
             cxy = draw_box(vis, courtesy_box, (0, 0, 255), f"COURTESY {courtesy_score:.2f}" if courtesy_score is not None else "COURTESY")
-            draw_box(vis, legal_box, (0, 255, 0), f"LEGAL {legal_score:.2f}" if legal_score is not None else "LEGAL")
+            lxy = draw_box(vis, legal_box, (0, 255, 0), f"LEGAL {legal_score:.2f}" if legal_score is not None else "LEGAL")
+
+            # Draw courtesy prediction label
             label = result["ocr_digits"] if result.get("ocr_digits") else "(empty)"
             if cxy is not None:
                 cx1, cy1, cx2, cy2 = cxy
                 cv2.putText(vis, f"PRED: {label}", (cx1, min(H - 10, cy2 + 30)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+
+            # Draw legal prediction label
+            if lxy is not None:
+                lx1, ly1, lx2, ly2 = lxy
+                legal_parsed_amount = result["legal_parsed_amount"]
+                legal_label = f"PRED LEGAL: {legal_parsed_amount}" if legal_parsed_amount is not None else "PRED LEGAL: (unparsed)"
+                cv2.putText(vis, legal_label, (lx1, min(H - 10, ly2 + 30)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            # Draw verification status overlay
+            if cxy is not None and lxy is not None:
+                status_label = "VERIFIED: MATCH" if result["verified"] else "VERIFIED: MISMATCH"
+                status_color = (0, 255, 0) if result["verified"] else (0, 0, 255)
+                cv2.putText(vis, status_label, (10, H - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, status_color, 3)
+
             cv2.imwrite(str(overlay_path), vis)
 
         result["time_sec"] = round(time.time() - t0, 4)
@@ -600,9 +1249,13 @@ class ChequeOCRPipeline:
                     "legal_score": None,
                     "overlay_path": "",
                     "crop_path": "",
+                    "legal_crop_path": "",
                     "stage_paths": {},
                     "ocr_raw": "",
                     "ocr_digits": "",
+                    "ocr_legal_text": "",
+                    "verified": False,
+                    "legal_parsed_amount": None,
                     "status": f"failed: {type(e).__name__}",
                     "time_sec": None,
                     "preprocess_debug": {},
@@ -616,7 +1269,10 @@ def write_outputs(results: List[Dict], out_dir: Union[str, Path]):
 
     import csv
     csv_path = out_dir / "predictions.csv"
-    fields = ["stem", "image_path", "ocr_digits", "ocr_raw", "courtesy_score", "legal_score", "status", "crop_path", "overlay_path"]
+    fields = [
+        "stem", "image_path", "ocr_digits", "ocr_raw", "courtesy_score", "legal_score",
+        "ocr_legal_text", "verified", "status", "crop_path", "legal_crop_path", "overlay_path"
+    ]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -624,14 +1280,17 @@ def write_outputs(results: List[Dict], out_dir: Union[str, Path]):
             w.writerow({k: r.get(k, "") for k in fields})
 
     txt_path = out_dir / "predictions.txt"
-    lines = [f"{r.get('stem','')}\t{r.get('ocr_digits','')}" for r in results]
+    lines = [f"{r.get('stem','')}\t{r.get('ocr_digits','')}\t{r.get('ocr_legal_text','')}" for r in results]
     txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     summary = {
         "total": len(results),
         "ok": sum(1 for r in results if r.get("status") == "ok"),
+        "verified_true": sum(1 for r in results if r.get("verified") is True),
+        "verified_false": sum(1 for r in results if r.get("verified") is False),
         "missing_detection": sum(1 for r in results if r.get("status") == "missing_detection"),
         "missing_courtesy_box": sum(1 for r in results if r.get("status") == "missing_courtesy_box"),
+        "missing_legal_box": sum(1 for r in results if r.get("status") == "missing_legal_box"),
         "ocr_failed": sum(1 for r in results if r.get("status") == "ocr_failed"),
     }
     (out_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

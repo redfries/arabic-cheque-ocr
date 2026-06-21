@@ -1,0 +1,17 @@
+# Core Deep Learning
+torch
+torchvision
+
+# Vision & Language Models
+transformers
+peft
+qwen-vl-utils
+accelerate
+
+# Image and Data processing
+numpy
+opencv-python
+Pillow
+
+# Web UI
+streamlit
