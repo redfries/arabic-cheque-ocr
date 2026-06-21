@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import io
+import os
 import tempfile
 import zipfile
 
@@ -22,10 +23,24 @@ from pipeline_core import PipelineConfig, ChequeOCRPipeline, write_outputs
 st.set_page_config(page_title="Cheque OCR Pipeline", layout="wide")
 st.title("Cheque OCR Pipeline (Detection + OCR)")
 
+# Detect if running inside a Modal container
+is_modal = os.path.exists("/root/models")
+
+if is_modal:
+    default_det_weights = "/root/models/detector/model_final.pth"
+    default_ocr_ckpt = "/root/models/ocr/crnn_ctc_v1/checkpoints/last.pt"
+    default_legal_ocr_base = "/root/models/Qwen3.5_model"
+    default_legal_ocr_ckpt = "/root/app/models/ocr/legal"
+else:
+    default_det_weights = "models/detector/model_final.pth"
+    default_ocr_ckpt = "models/ocr/crnn_ctc_v1/checkpoints/last.pt"
+    default_legal_ocr_base = "models/Qwen3.5_model"
+    default_legal_ocr_ckpt = "models/ocr/legal"
+
 with st.sidebar:
     st.header("Model paths")
-    det_weights = st.text_input("Part A Detectron2 weights (.pth)", value="models/detector/model_final.pth")
-    ocr_ckpt = st.text_input("Part B OCR checkpoint (.pt)", value="models/ocr/crnn_ctc_v1/checkpoints/last.pt")
+    det_weights = st.text_input("Part A Detectron2 weights (.pth)", value=default_det_weights)
+    ocr_ckpt = st.text_input("Part B OCR checkpoint (.pt)", value=default_ocr_ckpt)
 
     st.header("Detection")
     det_thresh = st.slider("Detector score threshold", 0.01, 0.90, 0.30, 0.01)
@@ -37,8 +52,8 @@ with st.sidebar:
     do_line_cleanup = st.checkbox("Remove long lines", value=True)
     
     st.header("Legal Crop + OCR (Qwen3.5)")
-    legal_ocr_ckpt = st.text_input("Part B Legal OCR adapter", value="models/ocr/legal")
-    legal_ocr_base = st.text_input("Part B Legal OCR base model", value="models/Qwen3.5_model")
+    legal_ocr_ckpt = st.text_input("Part B Legal OCR adapter", value=default_legal_ocr_ckpt)
+    legal_ocr_base = st.text_input("Part B Legal OCR base model", value=default_legal_ocr_base)
     legal_pad_frac = st.slider("Legal crop padding", 0.00, 0.20, 0.05, 0.01)
     do_fallback = st.checkbox("Enable fallback enhancements", value=True)
     

@@ -7,7 +7,8 @@ To deploy this app to Modal:
 2. Authenticate: modal setup
 3. Create the model volume and upload model weights:
     modal volume create cheque-ocr-models
-    modal volume put cheque-ocr-models models/ /
+    modal volume put cheque-ocr-models models/detector /detector
+    modal volume put cheque-ocr-models models/Qwen3.5_model /Qwen3.5_model
 4. Deploy the app:
     modal deploy modal_app.py
 """
@@ -24,7 +25,7 @@ volume = modal.Volume.from_name("cheque-ocr-models", create_if_missing=True)
 
 # Build a container image with all needed libraries
 image = (
-    modal.Image.debian_slim(python_version="3.10")
+    modal.Image.debian_slim(python_version="3.11")
     # Install OS libraries required by OpenCV and building Detectron2
     .apt_install(
         "git",
@@ -33,20 +34,27 @@ image = (
         "gcc",
         "g++",
     )
-    # Install Python dependencies
+    # Install PyTorch first (required by Detectron2 build)
     .pip_install(
-        "streamlit>=1.20.0",
-        "opencv-python-headless>=4.5.0",
-        "torch>=1.13.0",
-        "torchvision>=0.14.0",
-        "pillow>=9.0.0",
-        "numpy>=1.20.0",
-        "pandas>=1.5.0",
-        "requests>=2.28.0",
+        "torch",
+        "torchvision",
     )
     # Build and install Detectron2 from source
     .run_commands(
         "pip install 'git+https://github.com/facebookresearch/detectron2.git'"
+    )
+    # Install Python dependencies
+    .pip_install(
+        "streamlit>=1.20.0",
+        "opencv-python-headless>=4.5.0",
+        "pillow>=9.0.0",
+        "numpy>=1.20.0",
+        "pandas>=1.5.0",
+        "requests>=2.28.0",
+        "transformers",
+        "peft",
+        "qwen-vl-utils",
+        "accelerate",
     )
 )
 
@@ -65,6 +73,7 @@ src_mount = modal.Mount.from_local_dir(
     # This aligns with the default paths "models/detector/model_final.pth"
     # and "models/ocr/crnn_ctc_v1/checkpoints/last.pt" when running from /root/app.
     volumes={"/root/models": volume},
+    gpu="A10G",
     timeout=3600,
 )
 @modal.web_server(port=8501)
