@@ -2,10 +2,20 @@ import os, json, csv
 from urllib.parse import urlparse
 import requests
 
-BASE = "https://ics.rayanalsubhi.com"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoicmVmcmVzaCIsImV4cCI6ODA3MzI4Njk5NSwiaWF0IjoxNzY2MDg2OTk1LCJqdGkiOiJkYzk1OGZhZGM3ZGM0MzYyYTk4Y2JjMGJkOWQwYzdkYSIsInVzZXJfaWQiOjEwfQ.OypmIvU1OulejH0fEXj9HQEySRm2lbdP2QStGs72KRg"
-AUTH_STYLE = "Token"   # change to "Bearer" if needed
-EXPORT_JSON = "export.json"
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+BASE = os.getenv("ICS_BASE_URL", "https://ics.rayanalsubhi.com")
+TOKEN = os.getenv("ICS_API_TOKEN", "")
+AUTH_STYLE = os.getenv("ICS_AUTH_STYLE", "Token")   # change to "Bearer" if needed
+EXPORT_JSON = os.getenv("EXPORT_JSON", "export.json")
+
+if not TOKEN:
+    print("Warning: 'ICS_API_TOKEN' environment variable is not set.")
+    print("Set it in your environment or in a local .env file.")
 
 OUT_DIR = "partB_dataset"
 IMG_DIR = os.path.join(OUT_DIR, "images")
